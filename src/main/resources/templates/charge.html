@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <title>Charge</title>
+    <!--Bootstrap 4 CSS-->
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <!--Bootstrap 4 JavaScript-->
+    <script src="https://code.jquery.com/jquery-3.3.1.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js"></script>
+
+    <!--Stripe JavaScript Library-->
+    <script src="https://js.stripe.com/v3/"></script>
+</head>
+<body class="bg-light pt-5">
+
+<!--hero section-->
+<section class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-6 col-md-8 col-12 my-auto mx-auto">
+                <h1>
+                    Stripe One-Time Charge
+                </h1>
+                <p class="lead mb-4">
+                    Please fill the form below to complete the order payment
+                </p>
+                <div class="card mb-4">
+                    <div class="card-body">
+                        <h5>Leather Bag</h5>
+                        <p class="lead">USD 9.99</p>
+                    </div>
+                </div>
+                <div id="container"></div>
+                <script async
+                        src="https://pay.google.com/gp/p/js/pay.js"
+                        onload="onGooglePayLoaded()">
+                </script>
+                <form action="#" id="payment-form" method="post">
+                    <input id="api-key" type="hidden" th:value="${stripePublicKey}">
+                    <div class="form-group">
+                        <label class="font-weight-medium" for="card-element">
+                            Enter credit or debit card below
+                        </label>
+                        <div class="w-100" id="card-element">
+                            <!-- A Stripe Element will be inserted here. -->
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <input class="form-control" id="email" name="email"
+                               placeholder="Email Address" type="email" required>
+                    </div>
+                    <!-- Used to display Element errors. -->
+                    <div class="text-danger w-100" id="card-errors" role="alert"></div>
+                    <div class="form-group pt-2">
+                        <button class="btn btn-primary btn-block" id="submitButton" type="submit">
+                            Pay With Your Card
+                        </button>
+                        <div class="small text-muted mt-2">
+                            Pay securely with Stripe. By clicking the button above, you agree
+                            to our <a target="_blank" href="#">Terms of Service</a>,
+                            <a target="_blank" href="#">Privacy</a> and
+                            <a target="_blank" href="#">Refund</a> policies.
+
+                        </div>
+                    </div>
+
+
+                </form>
+
+            </div>
+        </div>
+    </div>
+</section>
+
+<!--custom javascript for handling subscription-->
+<script>
+
+//Google Pay
+    const baseRequest = {
+        apiVersion: 2,
+        apiVersionMinor: 0
+    };
+
+    const allowedCardNetworks = ["AMEX", "DISCOVER", "INTERAC", "JCB", "MASTERCARD", "VISA"];
+
+    const allowedCardAuthMethods = ["PAN_ONLY", "CRYPTOGRAM_3DS"];
+
+    const tokenizationSpecification = {
+        type: 'PAYMENT_GATEWAY',
+        parameters: {
+            'gateway': 'stripe',
+            'gatewayMerchantId': 'exampleGatewayMerchantId'
+        }
+    };
+
+    const baseCardPaymentMethod = {
+        type: 'CARD',
+        parameters: {
+            allowedAuthMethods: allowedCardAuthMethods,
+            allowedCardNetworks: allowedCardNetworks
+        }
+    };
+
+    const cardPaymentMethod = Object.assign(
+        {},
+        baseCardPaymentMethod,
+        {
+            tokenizationSpecification: tokenizationSpecification
+        }
+    );
+
+    let paymentsClient = null;
+
+    function getGoogleIsReadyToPayRequest() {
+        return Object.assign(
+            {},
+            baseRequest,
+            {
+                allowedPaymentMethods: [baseCardPaymentMethod]
+            }
+        );
+    }
+
+    function getGooglePaymentDataRequest() {
+        const paymentDataRequest = Object.assign({}, baseRequest);
+        paymentDataRequest.allowedPaymentMethods = [cardPaymentMethod];
+        paymentDataRequest.transactionInfo = getGoogleTransactionInfo();
+        paymentDataRequest.merchantInfo = {
+            // @todo a merchant ID is available for a production environment after approval by Google
+            // See {@link https://developers.google.com/pay/api/web/guides/test-and-deploy/integration-checklist|Integration checklist}
+            // merchantId: '01234567890123456789',
+            merchantName: 'Example Merchant'
+        };
+
+        paymentDataRequest.callbackIntents = ["PAYMENT_AUTHORIZATION"];
+
+        return paymentDataRequest;
+    }
+
+    function getGooglePaymentsClient() {
+        if ( paymentsClient === null ) {
+            paymentsClient = new google.payments.api.PaymentsClient({
+                environment: 'TEST',
+                paymentDataCallbacks: {
+                    onPaymentAuthorized: onPaymentAuthorized
+                }
+            });
+        }
+        return paymentsClient;
+    }
+
+    function onPaymentAuthorized(paymentData) {
+        return new Promise(function(resolve, reject){
+            // handle the response
+            processPayment(paymentData)
+                .then(function() {
+                    resolve({transactionState: 'SUCCESS'});
+                })
+                .catch(function() {
+                    resolve({
+                        transactionState: 'ERROR',
+                        error: {
+                            intent: 'PAYMENT_AUTHORIZATION',
+                            message: 'Insufficient funds, try again. Next attempt should work.',
+                            reason: 'PAYMENT_DATA_INVALID'
+                        }
+                    });
+                });
+        });
+    }
+
+    function onGooglePayLoaded() {
+        const paymentsClient = getGooglePaymentsClient();
+        paymentsClient.isReadyToPay(getGoogleIsReadyToPayRequest())
+            .then(function(response) {
+                if (response.result) {
+                    addGooglePayButton();
+                }
+            })
+            .catch(function(err) {
+                // show error in developer console for debugging
+                console.error(err);
+            });
+    }
+
+    function addGooglePayButton() {
+        const paymentsClient = getGooglePaymentsClient();
+        const button =
+            paymentsClient.createButton({onClick: onGooglePaymentButtonClicked});
+        document.getElementById('container').appendChild(button);
+    }
+
+
+    function getGoogleTransactionInfo() {
+        return {
+            displayItems: [
+                {
+                    label: "Subtotal",
+                    type: "SUBTOTAL",
+                    price: "11.00",
+                },
+                {
+                    label: "Tax",
+                    type: "TAX",
+                    price: "1.00",
+                }
+            ],
+            countryCode: 'US',
+            currencyCode: "USD",
+            totalPriceStatus: "FINAL",
+            totalPrice: "12.00",
+            totalPriceLabel: "Total"
+        };
+    }
+
+    // function onGooglePaymentButtonClicked() {
+    //     const paymentDataRequest = getGooglePaymentDataRequest();
+    //     paymentDataRequest.transactionInfo = getGoogleTransactionInfo();
+    //
+    //     const paymentsClient = getGooglePaymentsClient();
+    //     paymentsClient.loadPaymentData(paymentDataRequest);
+    // }
+    //
+    // let attempts = 0;
+    //
+    // function processPayment(paymentData) {
+    //     return new Promise(function(resolve, reject) {
+    //         setTimeout(function() {
+    //             // @todo pass payment token to your gateway to process payment
+    //             paymentToken = paymentData.paymentMethodData.tokenizationData.token;
+    //
+    //             if (attempts++ % 2 == 0) {
+    //                 reject(new Error('Every other attempt fails, next one should succeed'));
+    //             } else {
+    //                 resolve({});
+    //             }
+    //         }, 500);
+    //     });
+    // }
+
+    // Handle the click event on the Google Pay button
+    function onGooglePaymentButtonClicked() {
+        // Request payment information from the user
+        const paymentDataRequest = getGooglePaymentDataRequest();
+        paymentDataRequest.transactionInfo = getGoogleTransactionInfo();
+        const paymentsClient = getGooglePaymentsClient();
+
+        paymentsClient.loadPaymentData(paymentDataRequest).then(function(paymentData) {
+            // Send the payment information to your server for processing
+            sendPaymentToServer(paymentData);
+        }).catch(function(error) {
+            // Handle the error
+            console.error('error');
+        });
+    }
+
+    // Send the payment information to your server for processing
+    function sendPaymentToServer(paymentData) {
+        // Extract the payment information from the response
+
+        var paymentMethodData = paymentData.paymentMethodData;
+
+        // Send a request to your server to process the payment
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', '/create-charge');
+        xhr.setRequestHeader('Content-Type', 'application/json');
+        xhr.onload = function() {
+            // Handle the response from your server
+        };
+        xhr.send(JSON.stringify({
+            paymentMethodData: paymentMethodData
+        }));
+    }
+
+
+
+
+//Stripe
+    $(function () {
+        var API_KEY = $('#api-key').val();
+        // Create a Stripe client.
+        var stripe = Stripe(API_KEY);
+
+        // Create an instance of Elements.
+        var elements = stripe.elements();
+
+        // Create an instance of the card Element.
+        var card = elements.create('card');
+
+        // Add an instance of the card Element into the `card-element` <div>.
+        card.mount('#card-element');
+
+        // Handle real-time validation errors from the card Element.
+        card.addEventListener('change', function (event) {
+            var displayError = document.getElementById('card-errors');
+            if (event.error) {
+                displayError.textContent = event.error.message;
+            } else {
+                displayError.textContent = '';
+            }
+        });
+
+        // Handle form submission.
+        var form = document.getElementById('payment-form');
+        form.addEventListener('submit', function (event) {
+            event.preventDefault();
+            // handle payment
+            handlePayments();
+        });
+
+        //handle card submission
+        function handlePayments() {
+            stripe.createToken(card).then(function (result) {
+                if (result.error) {
+                    // Inform the user if there was an error.
+                    var errorElement = document.getElementById('card-errors');
+                    errorElement.textContent = result.error.message;
+                } else {
+                    // Send the token to your server.
+                    var token = result.token.id;
+                    var email = $('#email').val();
+                    $.post(
+                        "/create-charge",
+                        {email: email, token: token},
+                        function (data) {
+                            alert(data.details);
+                        }, 'json');
+                }
+            });
+        }
+    });
+</script>
+
+</body>
+</html>
